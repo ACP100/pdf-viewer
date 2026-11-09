@@ -1,7 +1,7 @@
+# pdfiumandroid and PdfBox-Android ship consumer rules for their JNI and reflection needs.
+# Keep pdfium's JNI-facing classes explicitly as well: native code looks them up by name.
 -keep class io.legere.pdfiumandroid.** { *; }
--keep class com.tom_roush.pdfbox.** { *; }
--keep class com.tom_roush.fontbox.** { *; }
--keep class com.tom_roush.harmony.** { *; }
+
 -dontwarn org.bouncycastle.**
 -dontwarn com.gemalto.jp2.**
 -dontwarn javax.annotation.**

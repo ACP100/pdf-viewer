@@ -8,6 +8,29 @@ mainstream PDF readers: view, search, annotate, fill & sign, organize pages and 
 - **Editing:** PdfBox-Android (`com.tom-roush:pdfbox-android`).
 - Fully offline. No account, no ads, no tracking.
 
+## Download
+
+Get the latest APK from [Releases](https://github.com/ACP100/pdf-viewer/releases):
+
+| File | For |
+|---|---|
+| `PDF-Viewer-<version>-arm64-v8a.apk` | Most phones (recommended) |
+| `PDF-Viewer-<version>-armeabi-v7a.apk` | Older 32-bit phones |
+| `PDF-Viewer-<version>-universal.apk` | Any device (larger) |
+| `…-x86_64.apk`, `…-x86.apk` | Emulators, Chromebooks |
+
+Allow "Install unknown apps" for your browser or file manager when Android asks.
+
+### Size
+| | |
+|---|---|
+| Download (per-device APK) | ~10.5–12 MB |
+| Universal APK | ~25 MB |
+| Memory while reading | ~80 MB measured with several pages rendered (page images are cached and freed as needed) |
+
+About half of the app is the PDFium rendering engine. The rest is the PDF editing library (with the
+CJK character maps and fonts it needs) and the app itself.
+
 ## Features
 
 ### Reading
@@ -60,13 +83,56 @@ certificate-based digital signatures, cloud storage/sync and shared reviews, AI 
 Requirements: JDK 17+ and the Android SDK (platform 35, build-tools 35).
 
 ```bash
-./gradlew assembleDebug        # app/build/outputs/apk/debug/app-debug.apk
-./gradlew assembleRelease      # app/build/outputs/apk/release/app-release.apk (minified)
+./gradlew assembleDebug        # app/build/outputs/apk/debug/app-<abi>-debug.apk
+./gradlew assembleRelease      # app/build/outputs/apk/release/app-<abi>-release.apk (minified)
 ./gradlew testDebugUnitTest    # Robolectric tests for all PDF editing operations
 ```
 
-The release build is signed with the debug key so it can be installed directly. Before publishing
-to a store, create your own keystore and set a `signingConfig` in `app/build.gradle.kts`.
+Builds produce one APK per CPU type plus `app-universal-*.apk`. Set the version with
+`-PappVersionName=1.2.3` (the version code is derived from it, or pass `-PappVersionCode`).
+
+Release builds are signed with your key when these environment variables are set:
+`SIGNING_KEYSTORE_FILE`, `SIGNING_KEYSTORE_PASSWORD`, `SIGNING_KEY_ALIAS`, `SIGNING_KEY_PASSWORD`.
+Otherwise they fall back to the debug key, which is only suitable for personal installs.
+
+## Releases
+
+GitHub Actions (`.github/workflows/release.yml`):
+
+- **Every push to `main` and every pull request:** runs the tests and builds the APKs, attached to
+  the workflow run as a downloadable artifact.
+- **Publish a release:** push a version tag, or use *Actions → Build & Release → Run workflow* and
+  enter a version.
+
+  ```bash
+  git tag v1.0.1
+  git push origin v1.0.1
+  ```
+
+  The workflow builds and signs the APKs and creates the GitHub Release `v1.0.1` with them attached.
+
+### One-time setup: your signing key
+
+Android only installs an update if it is signed with the same key as the installed app. Create a
+key once and store it as repository secrets, so every release is signed the same way:
+
+```bash
+keytool -genkeypair -v -keystore release.jks -alias pdfviewer -keyalg RSA -keysize 4096 -validity 10000
+base64 -w0 release.jks > release.jks.b64     # macOS: base64 -i release.jks -o release.jks.b64
+```
+
+In the repository: *Settings → Secrets and variables → Actions → New repository secret*:
+
+| Secret | Value |
+|---|---|
+| `KEYSTORE_BASE64` | contents of `release.jks.b64` |
+| `KEYSTORE_PASSWORD` | the keystore password you chose |
+| `KEY_ALIAS` | `pdfviewer` |
+| `KEY_PASSWORD` | the key password (same as the keystore password unless you set another) |
+
+Keep `release.jks` and its passwords somewhere safe and never commit them. Without the secrets the
+workflow still works, but each build is signed with a throwaway key, so users would have to
+uninstall before installing a newer release.
 
 ## Project layout
 

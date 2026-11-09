@@ -4,6 +4,18 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+// Version: release builds pass -PappVersionName=1.2.3 (taken from the git tag v1.2.3).
+val appVersionName: String = (findProperty("appVersionName") as String?)?.takeIf { it.isNotBlank() } ?: "1.0.0"
+val appVersionCode: Int = (findProperty("appVersionCode") as String?)?.toIntOrNull() ?: run {
+    val parts = appVersionName.substringBefore('-').split('.').map { it.toIntOrNull() ?: 0 } + listOf(0, 0, 0)
+    parts[0] * 10000 + parts[1] * 100 + parts[2]
+}
+
+// Release signing key, supplied by CI secrets or your shell:
+// SIGNING_KEYSTORE_FILE, SIGNING_KEYSTORE_PASSWORD, SIGNING_KEY_ALIAS, SIGNING_KEY_PASSWORD.
+// Without them, release builds fall back to the debug key (fine for personal installs only).
+val releaseKeystore: File? = System.getenv("SIGNING_KEYSTORE_FILE")?.let { file(it) }?.takeIf { it.isFile }
+
 android {
     namespace = "com.pdfviewer.app"
     compileSdk = 35
@@ -12,9 +24,20 @@ android {
         applicationId = "com.pdfviewer.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = appVersionCode
+        versionName = appVersionName
         vectorDrawables { useSupportLibrary = true }
+    }
+
+    signingConfigs {
+        if (releaseKeystore != null) {
+            create("release") {
+                storeFile = releaseKeystore
+                storePassword = System.getenv("SIGNING_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("SIGNING_KEY_ALIAS")
+                keyPassword = System.getenv("SIGNING_KEY_PASSWORD")
+            }
+        }
     }
 
     buildTypes {
@@ -22,9 +45,17 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            // Signed with the debug key so the APK can be installed directly.
-            // Replace with your own signing config before publishing to a store.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName(if (releaseKeystore != null) "release" else "debug")
+        }
+    }
+
+    // One small APK per CPU type (a phone only needs one), plus a universal APK.
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include("arm64-v8a", "armeabi-v7a", "x86_64", "x86")
+            isUniversalApk = true
         }
     }
     compileOptions {

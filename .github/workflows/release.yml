@@ -1,0 +1,135 @@
+name: Build & Release
+
+# - Every push to main and every pull request: run tests and build APKs (downloadable artifacts).
+# - Push a tag like v1.2.3, or run this workflow manually with a version: publish a GitHub Release.
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, e.g. 1.0.1 (creates tag v1.0.1)"
+        required: true
+        type: string
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # needed only to publish releases
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Work out version
+        id: version
+        env:
+          EVENT: ${{ github.event_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            VERSION="${INPUT_VERSION#v}"
+            RELEASE=true
+          elif [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+            RELEASE=true
+          else
+            VERSION=""
+            RELEASE=false
+          fi
+          if [ "$RELEASE" = true ] && ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Version must look like 1.2.3 (got '$VERSION')"
+            exit 1
+          fi
+          if [ "$RELEASE" = true ]; then
+            IFS=. read -r MAJOR MINOR PATCH <<< "$VERSION"
+            CODE=$((MAJOR * 10000 + MINOR * 100 + PATCH))
+            LABEL="$VERSION"
+          else
+            CODE=""
+            LABEL="dev-${GITHUB_SHA::7}"
+          fi
+          {
+            echo "version=$VERSION"
+            echo "code=$CODE"
+            echo "label=$LABEL"
+            echo "release=$RELEASE"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Set up release signing key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/release.jks"
+            echo "SIGNING_KEYSTORE_FILE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+          else
+            echo "::warning::No KEYSTORE_BASE64 secret: APKs are signed with a temporary debug key, so they won't install as updates over each other. See README > Releases."
+          fi
+
+      - name: Test and build
+        env:
+          SIGNING_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          SIGNING_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          SIGNING_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          VERSION: ${{ steps.version.outputs.version }}
+          CODE: ${{ steps.version.outputs.code }}
+        run: |
+          set -euo pipefail
+          ARGS=()
+          if [ -n "$VERSION" ]; then ARGS+=("-PappVersionName=$VERSION" "-PappVersionCode=$CODE"); fi
+          ./gradlew --no-daemon testDebugUnitTest assembleRelease "${ARGS[@]}"
+
+      - name: Collect APKs
+        env:
+          LABEL: ${{ steps.version.outputs.label }}
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          for f in app/build/outputs/apk/release/app-*-release.apk; do
+            abi=$(basename "$f" | sed -E 's/^app-(.*)-release\.apk$/\1/')
+            cp "$f" "out/PDF-Viewer-$LABEL-$abi.apk"
+          done
+          ls -la out
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: PDF-Viewer-${{ steps.version.outputs.label }}
+          path: out/*.apk
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        if: steps.version.outputs.release == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          TAG="v$VERSION"
+          NOTES="$RUNNER_TEMP/notes.md"
+          cat > "$NOTES" <<NOTES_EOF
+          **Which file?** Most phones: \`PDF-Viewer-$VERSION-arm64-v8a.apk\`. Older 32-bit phones: \`armeabi-v7a\`. Not sure: \`universal\` (works everywhere, larger).
+
+          Requires Android 8.0 or newer. Allow "Install unknown apps" for your browser or file manager when asked.
+          NOTES_EOF
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release upload "$TAG" out/*.apk --clobber
+          else
+            gh release create "$TAG" out/*.apk \
+              --target "$GITHUB_SHA" \
+              --title "PDF Viewer $VERSION" \
+              --notes-file "$NOTES" \
+              --generate-notes
+          fi
