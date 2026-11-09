@@ -1,0 +1,10 @@
+-keep class io.legere.pdfiumandroid.** { *; }
+-keep class com.tom_roush.pdfbox.** { *; }
+-keep class com.tom_roush.fontbox.** { *; }
+-keep class com.tom_roush.harmony.** { *; }
+-dontwarn org.bouncycastle.**
+-dontwarn com.gemalto.jp2.**
+-dontwarn javax.annotation.**
+-dontwarn com.google.errorprone.annotations.**
+-dontwarn org.checkerframework.**
+-dontwarn com.google.j2objc.annotations.**
